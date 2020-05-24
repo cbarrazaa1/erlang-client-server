@@ -20,12 +20,12 @@
 
 
 -module(t6).
--import(lists, [filter/2, foreach/2]).
+-import(lists, [filter/2, foreach/2, map/2, delete/2]).
 -export([
   admin/2, inicia_admin/0, termina_admin/0, 
   registra_asistente/2, elimina_asistente/1,
   registra_conferencia/3, elimina_conferencia/1,
-  muestra_asistente/2,
+  muestra_asistente/1,
   conferencia/4, buscar_asistente/2,
   admin_elimina_asistente/2, buscar_conferencia/2, buscar_asistente_conferencia/2,
   admin_elimina_conferencia/2, inscribe_conferencia/2, 
@@ -34,11 +34,11 @@
 ]).
 
 buscar_asistente(_, []) -> no_existe;
-buscar_asistente(Clave, [{Clave, _} | _]) -> Clave;
+buscar_asistente(Clave, [{Clave, _, _} | _]) -> Clave;
 buscar_asistente(Clave, [_ | T]) -> buscar_asistente(Clave, T).
 
 admin_elimina_asistente(_, []) -> [];
-admin_elimina_asistente(Clave, [{Clave, _} | T]) -> T;
+admin_elimina_asistente(Clave, [{Clave, _, _} | T]) -> T;
 admin_elimina_asistente(Clave, [Asistente | T]) ->
   [Asistente] ++ admin_elimina_asistente(Clave, T).
   
@@ -67,13 +67,15 @@ conferencia(Clave, Titulo, Cupo, Asistentes) ->
       conferencia(Clave, Titulo, Cupo, lists:delete(ClaveAsistente, Asistentes));
     {muestra} ->
       muestra_conferencia(Titulo, Cupo, Asistentes),
+      io:format("~n"),
       conferencia(Clave, Titulo, Cupo, Asistentes)
   end.
 
 
-muestra_asistente({Clave, Nombre}, Conferencias) ->
+muestra_asistente({Clave, Nombre, Confs}) ->
   io:format("Asistente ~p - ~p~n --Conferencias: ", [Clave,Nombre]),
-  lists:foreach(fun(Conferencia) -> muestra_conferencia_asistente(Conferencia, Clave) end, Conferencias).
+  lists:foreach(fun(Conf) -> io:format("~p ", [Conf]) end, Confs),
+  io:format("~n").
 
  muestra_conferencia(Titulo, Cupo, Asistentes) ->
     io:format(" Conferencia: ~p ~n Cupo: ~p ~n Asistentes: ~n", [Titulo, Cupo]),
@@ -87,13 +89,13 @@ buscar_asistente_conferencia(Clave, [Clave | _]) -> Clave;
 buscar_asistente_conferencia(Clave, [_ | T]) -> buscar_asistente_conferencia(Clave, T).
 
 %  Conferencia: Tupla con {ClaveConferencia, Titulo, Cupo, [ClaveAsistentes]}
-%  Asistentes: Lista de Tuplas con  {Clave, Nombre}
+%  Asistentes: Lista de Tuplas con  {Clave, Nombre, [ClaveConferencia]}
 %  Conferencias: Lista de Claves de conferencias
 admin(Asistentes, Conferencias) ->
   process_flag(trap_exit, true),
   receive
     {muestra_asistentes} ->
-      lists:foreach(fun(Asistente) -> muestra_asistente(Asistente, Conferencias) end, Asistentes),
+      lists:foreach(fun(Asistente) -> muestra_asistente(Asistente) end, Asistentes),
       admin(Asistentes, Conferencias);
     {conferencia_asistente, Titulo, AsistentesConferencia, ClaveAsistente} -> 
       case buscar_asistente_conferencia(ClaveAsistente, AsistentesConferencia) of
@@ -106,14 +108,14 @@ admin(Asistentes, Conferencias) ->
       end;
 
     {muestra_conferencias} ->
-      lists:foreach(fun(Conferencia) -> Conferencia ! {muestra} end, Conferencias),
+      lists:foreach(fun(Conferencia) -> Conferencia ! {muestra}, timer:sleep(1) end, Conferencias),
       admin(Asistentes, Conferencias);
     {PID, registra_asistente, Clave, Nombre} ->
       case buscar_asistente(Clave, Asistentes) of
         no_existe ->
           io:format("El asistente '~p' fue agregado.~n", [Clave]),
           PID ! {"El asistente fue agregado", Clave},
-          admin(Asistentes ++ [{Clave, Nombre}], Conferencias);
+          admin(Asistentes ++ [{Clave, Nombre, []}], Conferencias);
         _ ->
           io:format("Ya existe un asistente con clave '~p'.~n", [Clave]),
           PID ! {"El asistente ya existe", Clave},
@@ -170,7 +172,16 @@ admin(Asistentes, Conferencias) ->
             _ ->
               io:format("El asistente con clave '~p' se logro inscribir a '~p' ~n", [ClaveAsistente, ClaveConferencia]),
               ClaveConferencia ! {PID, inscribe, ClaveAsistente},
-              admin(Asistentes, Conferencias)
+              admin(map(
+                fun({Clave, Nombre, Confs}) ->
+                  case Clave of
+                    ClaveAsistente ->
+                      {Clave, Nombre, Confs ++ [ClaveConferencia]};
+                    _ ->
+                      {Clave, Nombre, Confs}
+                  end
+                end,
+              Asistentes), Conferencias)
           end
       end;
     {PID, desinscribe_conferencia, ClaveAsistente, ClaveConferencia} ->
@@ -187,7 +198,16 @@ admin(Asistentes, Conferencias) ->
               admin(Asistentes, Conferencias);
             _ ->
               ClaveConferencia ! {PID, desinscribe, ClaveAsistente},
-              admin(Asistentes, Conferencias)
+              admin(map(
+                fun({Clave, Nombre, Confs}) ->
+                  case Clave of
+                    ClaveAsistente ->
+                      {Clave, Nombre, delete(ClaveConferencia, Confs)};
+                    _ ->
+                      {Clave, Nombre, Confs}
+                  end
+                end,
+              Asistentes), Conferencias)
           end
       end   
   end.
